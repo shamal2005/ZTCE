@@ -13,6 +13,10 @@ import {
   CASCADE_SETTLE_MS,
   CASCADE_APPROACH_MS,
   CASCADE_IMPACT_MS,
+  FINAL_BUILDUP_MS,
+  FINAL_HIGHLIGHT_DURATION_MS,
+  FINAL_APPROACH_MS,
+  FINAL_COLLISION_STAGGER_MS,
 } from "../types/kessler";
 
 export const Route = createFileRoute("/")({
@@ -59,6 +63,8 @@ function Index({ onComplete }: IndexProps = {}) {
   const [kesslerCountdown, setKesslerCountdown] = useState<number>(5);
   const [kesslerCollisionStartTime, setKesslerCollisionStartTime] = useState<number>(0);
   const [kesslerSecondaryCollisionStartTime, setKesslerSecondaryCollisionStartTime] = useState<number>(0);
+  const [kesslerFinalCollisionStartTime, setKesslerFinalCollisionStartTime] = useState<number>(0);
+  const [kesslerFinalHighlightStartTime, setKesslerFinalHighlightStartTime] = useState<number>(0);
 
   useEffect(() => {
     if (currentScreen === 'kessler') {
@@ -79,6 +85,8 @@ function Index({ onComplete }: IndexProps = {}) {
       setKesslerCountdown(5);
       setKesslerCollisionStartTime(0);
       setKesslerSecondaryCollisionStartTime(0);
+      setKesslerFinalCollisionStartTime(0);
+      setKesslerFinalHighlightStartTime(0);
     }
   }, [currentScreen]);
 
@@ -112,6 +120,69 @@ function Index({ onComplete }: IndexProps = {}) {
     }, CASCADE_IMPACT_MS);
 
     return () => clearTimeout(escalateTimer);
+  }, [kesslerSimState]);
+
+  // Phase 6: build-up after secondary collision stabilizes
+  useEffect(() => {
+    if (kesslerSimState !== 'cascade_escalating') return;
+
+    const buildupTimer = setTimeout(() => {
+      setKesslerFinalHighlightStartTime(Date.now());
+      setKesslerSimState('final_highlight');
+    }, FINAL_BUILDUP_MS);
+
+    return () => clearTimeout(buildupTimer);
+  }, [kesslerSimState]);
+
+  useEffect(() => {
+    if (kesslerSimState !== 'final_highlight') return;
+
+    const approachTimer = setTimeout(() => {
+      setKesslerFinalCollisionStartTime(Date.now());
+      setKesslerSimState('final_approach');
+    }, FINAL_HIGHLIGHT_DURATION_MS);
+
+    return () => clearTimeout(approachTimer);
+  }, [kesslerSimState]);
+
+  useEffect(() => {
+    if (kesslerSimState !== 'final_approach') return;
+
+    const impactTimer = setTimeout(() => {
+      setKesslerSimState('final_impact_1');
+    }, FINAL_APPROACH_MS);
+
+    return () => clearTimeout(impactTimer);
+  }, [kesslerSimState]);
+
+  useEffect(() => {
+    if (kesslerSimState !== 'final_impact_1') return;
+
+    const nextTimer = setTimeout(() => {
+      setKesslerSimState('final_impact_2');
+    }, FINAL_COLLISION_STAGGER_MS);
+
+    return () => clearTimeout(nextTimer);
+  }, [kesslerSimState]);
+
+  useEffect(() => {
+    if (kesslerSimState !== 'final_impact_2') return;
+
+    const nextTimer = setTimeout(() => {
+      setKesslerSimState('final_impact_3');
+    }, FINAL_COLLISION_STAGGER_MS);
+
+    return () => clearTimeout(nextTimer);
+  }, [kesslerSimState]);
+
+  useEffect(() => {
+    if (kesslerSimState !== 'final_impact_3') return;
+
+    const endTimer = setTimeout(() => {
+      setKesslerSimState('kessler_cascade_active');
+    }, CASCADE_IMPACT_MS);
+
+    return () => clearTimeout(endTimer);
   }, [kesslerSimState]);
 
   useEffect(() => {
@@ -438,6 +509,8 @@ function Index({ onComplete }: IndexProps = {}) {
               kesslerCountdown={kesslerCountdown}
               kesslerCollisionStartTime={kesslerCollisionStartTime}
               kesslerSecondaryCollisionStartTime={kesslerSecondaryCollisionStartTime}
+              kesslerFinalCollisionStartTime={kesslerFinalCollisionStartTime}
+              kesslerFinalHighlightStartTime={kesslerFinalHighlightStartTime}
             />
             <NavigationPanel 
               active={showGlobe && currentScreen === 'home'} 

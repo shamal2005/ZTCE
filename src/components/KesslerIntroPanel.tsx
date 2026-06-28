@@ -51,6 +51,16 @@ function getSnapshotValues(simState: KesslerSimState) {
       return { satellites: 18, debris: 45, collisions: 'Monitoring', events: 1 };
     case 'cascade_escalating':
       return { satellites: 17, debris: 70, collisions: 'High Risk', events: 2 };
+    case 'final_highlight':
+    case 'final_approach':
+      return { satellites: 17, debris: 70, collisions: 'High Risk', events: 2 };
+    case 'final_impact_1':
+      return { satellites: 16, debris: 80, collisions: 'High Risk', events: 3 };
+    case 'final_impact_2':
+      return { satellites: 15, debris: 89, collisions: 'High Risk', events: 4 };
+    case 'final_impact_3':
+    case 'kessler_cascade_active':
+      return { satellites: 14, debris: 100, collisions: 'High Risk', events: 5 };
     default:
       return { satellites: 20, debris: 0, collisions: simState === 'idle' || simState === 'initializing' ? '0' : '1', events: 0 };
   }
@@ -65,7 +75,17 @@ export default function KesslerIntroPanel({
   onStartSim,
 }: KesslerIntroPanelProps) {
   const snapshot = getSnapshotValues(simState);
-  const isCascadePhase = simState === 'cascade_approach' || simState === 'cascade_impact' || simState === 'cascade_escalating';
+  const isCascadePhase =
+    simState === 'cascade_approach' ||
+    simState === 'cascade_impact' ||
+    simState === 'cascade_escalating';
+  const isFinalCascadePhase =
+    simState === 'final_highlight' ||
+    simState === 'final_approach' ||
+    simState === 'final_impact_1' ||
+    simState === 'final_impact_2' ||
+    simState === 'final_impact_3' ||
+    simState === 'kessler_cascade_active';
 
   return (
     <div
@@ -116,6 +136,7 @@ export default function KesslerIntroPanel({
             simState === 'cascade_approach' ? "border-orange-500/30 bg-orange-950/10" :
             simState === 'cascade_impact' ? "border-orange-500/40 bg-orange-950/15" :
             simState === 'cascade_escalating' ? "border-red-500/50 bg-red-950/20" :
+            isFinalCascadePhase ? "border-red-600/55 bg-red-950/25" :
             "border-emerald-500/20 bg-emerald-950/5"
           }`}
         >
@@ -130,6 +151,7 @@ export default function KesslerIntroPanel({
                 simState === 'cascade_approach' ? "text-orange-400 animate-pulse" :
                 simState === 'cascade_impact' ? "text-orange-500 animate-pulse" :
                 simState === 'cascade_escalating' ? "text-red-500 animate-pulse" :
+                isFinalCascadePhase ? "text-red-500 animate-pulse" :
                 "text-emerald-400"
               }`} />
               <span className="text-[10px] md:text-[11px] font-bold font-inter tracking-[0.12em] text-slate-200 uppercase">
@@ -190,6 +212,12 @@ export default function KesslerIntroPanel({
               <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-red-500/20 border border-red-500/40 text-[9px] md:text-[10px] font-bold text-red-500 tracking-wider uppercase">
                 <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
                 CASCADE ESCALATING
+              </span>
+            )}
+            {isFinalCascadePhase && (
+              <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-red-600/25 border border-red-500/50 text-[9px] md:text-[10px] font-bold text-red-400 tracking-wider uppercase">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-ping" />
+                KESSLER CASCADE ACTIVE
               </span>
             )}
           </div>
@@ -275,6 +303,38 @@ export default function KesslerIntroPanel({
                 The orbital environment is becoming increasingly unstable as debris density continues to rise.
               </p>
             )}
+            {simState === 'final_highlight' && (
+              <p className="text-red-300/90 font-medium">
+                Multiple dangerous debris fragments detected within the orbital debris field.
+                <br />
+                Secondary collision trajectories forming across multiple orbital paths...
+              </p>
+            )}
+            {simState === 'final_approach' && (
+              <p className="text-red-300/90 font-medium">
+                Multiple operational satellites converging toward debris impact zones.
+                <br />
+                Runaway collision cascade imminent...
+              </p>
+            )}
+            {(simState === 'final_impact_1' || simState === 'final_impact_2' || simState === 'final_impact_3') && (
+              <p className="text-red-300/90 font-medium">
+                Runaway orbital collisions in progress.
+                <br />
+                Debris fragments triggering additional impacts in rapid succession...
+              </p>
+            )}
+            {simState === 'kessler_cascade_active' && (
+              <p className="text-red-300/90 font-medium">
+                The debris density has reached a critical level.
+                <br />
+                <br />
+                Multiple secondary collisions are now occurring in rapid succession.
+                <br />
+                <br />
+                Without mitigation, the orbital environment will continue generating additional debris, threatening satellites and future space missions.
+              </p>
+            )}
           </div>
         </div>
 
@@ -327,6 +387,7 @@ export default function KesslerIntroPanel({
                 simState === 'debris_drifting' ? "text-red-400 animate-pulse" :
                 simState === 'cascade_approach' || simState === 'cascade_impact' ? "text-orange-400 animate-pulse" :
                 simState === 'cascade_escalating' ? "text-red-500 animate-pulse" :
+                isFinalCascadePhase ? "text-red-500 animate-pulse" :
                 "text-purple-400"
               }`}>
                 {simState === 'idle' && 'Standby'}
@@ -339,6 +400,12 @@ export default function KesslerIntroPanel({
                 {simState === 'cascade_approach' && 'Cascade Detected'}
                 {simState === 'cascade_impact' && 'Secondary Impact'}
                 {simState === 'cascade_escalating' && 'Cascade Escalating'}
+                {simState === 'final_highlight' && 'Kessler Cascade Active'}
+                {simState === 'final_approach' && 'Kessler Cascade Active'}
+                {simState === 'final_impact_1' && 'Kessler Cascade Active'}
+                {simState === 'final_impact_2' && 'Kessler Cascade Active'}
+                {simState === 'final_impact_3' && 'Kessler Cascade Active'}
+                {simState === 'kessler_cascade_active' && 'Kessler Cascade Active'}
               </span>
             </div>
           </div>
@@ -353,7 +420,7 @@ export default function KesslerIntroPanel({
           className={`w-full relative group overflow-hidden rounded-xl border px-4 py-3 md:py-3.5 text-center font-inter text-xs md:text-sm font-bold uppercase tracking-[0.15em] transition-all duration-300 ${
             simState === 'idle'
               ? "border-purple-500/30 bg-gradient-to-r from-purple-950/20 via-fuchsia-950/20 to-rose-950/20 text-white shadow-[0_0_15px_rgba(168,85,247,0.15)] hover:border-purple-400/50 hover:shadow-[0_0_25px_rgba(168,85,247,0.3)] active:scale-[0.98] active:opacity-90 cursor-pointer"
-              : simState === 'debris_drifting' || isCascadePhase
+              : simState === 'debris_drifting' || isCascadePhase || isFinalCascadePhase
               ? "border-red-500/10 bg-red-950/20 text-red-500 opacity-60 cursor-not-allowed"
               : "border-slate-500/10 bg-slate-950/20 text-slate-500 opacity-60 cursor-not-allowed"
           }`}
@@ -415,6 +482,12 @@ export default function KesslerIntroPanel({
               <>
                 <Activity className="w-3.5 h-3.5 text-red-500 animate-pulse" />
                 <span>Cascade Escalating</span>
+              </>
+            )}
+            {isFinalCascadePhase && (
+              <>
+                <Activity className="w-3.5 h-3.5 text-red-500 animate-pulse" />
+                <span>Kessler Cascade Active</span>
               </>
             )}
           </span>
