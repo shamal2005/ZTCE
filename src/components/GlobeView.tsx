@@ -44,6 +44,10 @@ interface KesslerDebrisItem {
   rotationPhase: number;
   scaleFactor: number;
   dispersionRole: DebrisDispersionRole;
+  orbitalShellTier: OrbitalShellTier;
+  orbitAnchorLon: number;
+  orbitAnchorLat: number;
+  orbitBaseHeight: number;
   isDangerous?: boolean;
 }
 
@@ -51,8 +55,11 @@ const DEBRIS_BURST_PEAK_SEC = 0.85;
 const DEBRIS_BURST_DECAY_SEC = 1.6;
 const DEBRIS_ORBIT_ALT_RAMP_SEC = 2.0;
 const CENTRAL_DEBRIS_FRACTION = 0.35;
+const SHELL_HORIZON_FRACTION = 0.4;
+const SHELL_FOREGROUND_FRACTION = 0.35;
 
 type DebrisDispersionRole = 'central' | 'outer';
+type OrbitalShellTier = 'horizon' | 'foreground' | 'high';
 
 function smoothstep01(t: number): number {
   const c = Math.max(0, Math.min(1, t));
@@ -64,6 +71,88 @@ function burstWeightAt(elapsedSec: number): number {
     return 1 + 0.65 * Math.exp(-elapsedSec / 0.22);
   }
   return 1 - smoothstep01((elapsedSec - DEBRIS_BURST_PEAK_SEC) / DEBRIS_BURST_DECAY_SEC);
+}
+
+function assignOrbitalShellTier(index: number, count: number): OrbitalShellTier {
+  const horizonCount = Math.round(count * SHELL_HORIZON_FRACTION);
+  const foregroundCount = Math.round(count * SHELL_FOREGROUND_FRACTION);
+  if (index < horizonCount) return 'horizon';
+  if (index < horizonCount + foregroundCount) return 'foreground';
+  return 'high';
+}
+
+function applyOrbitalShellAnchors(
+  tier: OrbitalShellTier,
+  spawnLon: number,
+  spawnLat: number,
+  spawnHeight: number
+): { orbitAnchorLon: number; orbitAnchorLat: number; orbitBaseHeight: number } {
+  let orbitAnchorLon = spawnLon;
+  let orbitAnchorLat = spawnLat;
+  let orbitBaseHeight = spawnHeight;
+
+  switch (tier) {
+    case 'horizon':
+      orbitAnchorLon += (Math.random() - 0.5) * 10;
+      orbitAnchorLat += (Math.random() - 0.5) * 7;
+      orbitBaseHeight += (Math.random() - 0.5) * 50000;
+      break;
+    case 'foreground':
+      orbitAnchorLon += (Math.random() - 0.5) * 62;
+      orbitAnchorLat += (Math.random() - 0.5) * 26;
+      orbitBaseHeight -= 95000 + Math.random() * 245000;
+      break;
+    case 'high':
+      orbitAnchorLon += (Math.random() - 0.5) * 24;
+      orbitAnchorLat += (Math.random() - 0.5) * 16;
+      orbitBaseHeight += 85000 + Math.random() * 215000;
+      break;
+  }
+
+  orbitBaseHeight = Math.max(240000, Math.min(980000, orbitBaseHeight));
+  return { orbitAnchorLon, orbitAnchorLat, orbitBaseHeight };
+}
+
+function applyOrbitalShellMotionModifiers(
+  tier: OrbitalShellTier,
+  orbitalLonOffset: number,
+  orbitalLatOffset: number,
+  orbitalInclination: number,
+  orbitalAltitudeOffset: number,
+  scaleFactor: number
+): {
+  orbitalLonOffset: number;
+  orbitalLatOffset: number;
+  orbitalInclination: number;
+  orbitalAltitudeOffset: number;
+  scaleFactor: number;
+} {
+  switch (tier) {
+    case 'horizon':
+      return {
+        orbitalLonOffset,
+        orbitalLatOffset,
+        orbitalInclination,
+        orbitalAltitudeOffset,
+        scaleFactor,
+      };
+    case 'foreground':
+      return {
+        orbitalLonOffset: orbitalLonOffset * (1.2 + Math.random() * 0.35),
+        orbitalLatOffset: orbitalLatOffset * (1.25 + Math.random() * 0.4),
+        orbitalInclination: orbitalInclination * (1.1 + Math.random() * 0.45),
+        orbitalAltitudeOffset: orbitalAltitudeOffset * (0.55 + Math.random() * 0.35),
+        scaleFactor: scaleFactor * (0.88 + Math.random() * 0.2),
+      };
+    case 'high':
+      return {
+        orbitalLonOffset: orbitalLonOffset * (1.05 + Math.random() * 0.25),
+        orbitalLatOffset: orbitalLatOffset * (1.1 + Math.random() * 0.3),
+        orbitalInclination,
+        orbitalAltitudeOffset: orbitalAltitudeOffset + (Math.random() - 0.5) * 70000,
+        scaleFactor: scaleFactor * (0.66 + Math.random() * 0.24),
+      };
+  }
 }
 
 /** Evenly distributed sphere directions in local ENU at the collision point — no global-axis bias. */
@@ -156,22 +245,22 @@ function computeIndependentOrbitPosition(debris: KesslerDebrisItem, elapsedSec: 
   const orbitBlend = smoothstep01(elapsedSec / DEBRIS_ORBIT_ALT_RAMP_SEC);
 
   const lon =
-    debris.spawnLon +
+    debris.orbitAnchorLon +
     elapsedSec * debris.orbitalLonSpeed +
     debris.orbitalLonOffset * orbitBlend;
 
   const lonRad = lon * Cesium.Math.RADIANS_PER_DEGREE;
-  const spawnLonRad = debris.spawnLon * Cesium.Math.RADIANS_PER_DEGREE;
+  const spawnLonRad = debris.orbitAnchorLon * Cesium.Math.RADIANS_PER_DEGREE;
 
   const lat =
-    debris.spawnLat +
+    debris.orbitAnchorLat +
     debris.orbitalLatOffset * orbitBlend +
     debris.orbitalInclination *
       orbitBlend *
       (Math.sin(lonRad + debris.orbitalPhaseOffset) - Math.sin(spawnLonRad + debris.orbitalPhaseOffset));
 
   const altBlend = Math.min(1, elapsedSec / DEBRIS_ORBIT_ALT_RAMP_SEC);
-  const height = debris.spawnHeight + debris.orbitalAltitudeOffset * altBlend;
+  const height = debris.orbitBaseHeight + debris.orbitalAltitudeOffset * altBlend;
 
   return Cesium.Ellipsoid.WGS84.cartographicToCartesian(
     Cesium.Cartographic.fromDegrees(lon, lat, Math.max(height, 180000))
@@ -279,6 +368,28 @@ function generateKesslerDebrisFragments(
       scaleFactor = 0.72 + Math.random() * 0.56;
     }
 
+    const orbitalShellTier = assignOrbitalShellTier(i, count);
+    const shellAnchors = applyOrbitalShellAnchors(
+      orbitalShellTier,
+      spawnLon,
+      spawnLat,
+      spawnHeight
+    );
+    ({
+      orbitalLonOffset,
+      orbitalLatOffset,
+      orbitalInclination,
+      orbitalAltitudeOffset,
+      scaleFactor,
+    } = applyOrbitalShellMotionModifiers(
+      orbitalShellTier,
+      orbitalLonOffset,
+      orbitalLatOffset,
+      orbitalInclination,
+      orbitalAltitudeOffset,
+      scaleFactor
+    ));
+
     const velocity = Cesium.Cartesian3.multiplyByScalar(burstDirection, burstSpeed, new Cesium.Cartesian3());
     const orbitalPhaseOffset = Math.random() * Math.PI * 2;
     const rotationPhase = Math.random() * Math.PI * 2;
@@ -306,6 +417,10 @@ function generateKesslerDebrisFragments(
       rotationPhase,
       scaleFactor,
       dispersionRole: role,
+      orbitalShellTier,
+      orbitAnchorLon: shellAnchors.orbitAnchorLon,
+      orbitAnchorLat: shellAnchors.orbitAnchorLat,
+      orbitBaseHeight: shellAnchors.orbitBaseHeight,
     };
 
     item.positionProperty = new Cesium.CallbackProperty(() => {
