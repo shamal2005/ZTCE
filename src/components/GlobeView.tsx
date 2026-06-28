@@ -43,12 +43,16 @@ interface KesslerDebrisItem {
   rotationSpeed: number;
   rotationPhase: number;
   scaleFactor: number;
+  dispersionRole: DebrisDispersionRole;
   isDangerous?: boolean;
 }
 
 const DEBRIS_BURST_PEAK_SEC = 0.85;
 const DEBRIS_BURST_DECAY_SEC = 1.6;
 const DEBRIS_ORBIT_ALT_RAMP_SEC = 2.0;
+const CENTRAL_DEBRIS_FRACTION = 0.35;
+
+type DebrisDispersionRole = 'central' | 'outer';
 
 function smoothstep01(t: number): number {
   const c = Math.max(0, Math.min(1, t));
@@ -78,6 +82,35 @@ function generateIsotropicBurstDirection(
     Math.cos(theta) * ringRadius + (Math.random() - 0.5) * jitter,
     Math.sin(theta) * ringRadius + (Math.random() - 0.5) * jitter,
     up + (Math.random() - 0.5) * jitter
+  );
+  Cesium.Cartesian3.normalize(localDir, localDir);
+
+  const enuToFixed = Cesium.Transforms.eastNorthUpToFixedFrame(origin);
+  const ecefDir = Cesium.Matrix4.multiplyByPointAsVector(
+    enuToFixed,
+    localDir,
+    new Cesium.Cartesian3()
+  );
+  Cesium.Cartesian3.normalize(ecefDir, ecefDir);
+  return ecefDir;
+}
+
+/** Tangential scatter around the collision point — keeps fragments in the central horizon cloud. */
+function generateCentralClusterDirection(
+  origin: Cesium.Cartesian3,
+  index: number,
+  count: number
+): Cesium.Cartesian3 {
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+  const theta = goldenAngle * index + Math.random() * 0.55;
+  const tangential = 0.5 + Math.random() * 0.42;
+  const radial = (Math.random() - 0.5) * 0.32;
+  const jitter = 0.06 + (index % 5) * 0.015;
+
+  const localDir = new Cesium.Cartesian3(
+    Math.cos(theta) * tangential + (Math.random() - 0.5) * jitter,
+    Math.sin(theta) * tangential + (Math.random() - 0.5) * jitter,
+    radial + (Math.random() - 0.5) * jitter * 0.45
   );
   Cesium.Cartesian3.normalize(localDir, localDir);
 
@@ -200,23 +233,55 @@ function generateKesslerDebrisFragments(
   const spawnHeight = spawnCarto.height;
   const spawnOrigin = Cesium.Cartesian3.clone(origin);
 
+  const centralCount = Math.max(1, Math.round(count * CENTRAL_DEBRIS_FRACTION));
+  const outerCount = Math.max(1, count - centralCount);
+
   const debrisList: KesslerDebrisItem[] = [];
   for (let i = 0; i < count; i++) {
-    const burstDirection = generateIsotropicBurstDirection(spawnOrigin, i, count);
-    const speedSpread = 0.45 + (i % 11) * 0.09 + Math.random() * 0.85;
-    const burstSpeed = (32000 + Math.pow(Math.random(), 0.55) * 148000) * speedSpread;
-    const velocity = Cesium.Cartesian3.multiplyByScalar(burstDirection, burstSpeed, new Cesium.Cartesian3());
+    const isCentral = i < centralCount;
+    const role: DebrisDispersionRole = isCentral ? 'central' : 'outer';
+    const roleIndex = isCentral ? i : i - centralCount;
+    const roleCount = isCentral ? centralCount : outerCount;
 
-    const lonSpeedMag = (0.45 + Math.random() * 1.05) * 1.8;
-    const orbitalLonSpeed = (Math.random() < 0.5 ? -1 : 1) * lonSpeedMag;
-    const orbitalLonOffset = (Math.random() - 0.5) * 5.5;
-    const orbitalLatOffset = (Math.random() - 0.5) * 4.5;
-    const orbitalInclination = 1.5 + Math.random() * 14;
+    let burstDirection: Cesium.Cartesian3;
+    let burstSpeed: number;
+    let orbitalLonSpeed: number;
+    let orbitalLonOffset: number;
+    let orbitalLatOffset: number;
+    let orbitalInclination: number;
+    let orbitalAltitudeOffset: number;
+    let rotationSpeed: number;
+    let scaleFactor: number;
+
+    if (isCentral) {
+      burstDirection = generateCentralClusterDirection(spawnOrigin, roleIndex, roleCount);
+      const speedSpread = 0.3 + Math.random() * 0.45;
+      burstSpeed = (5000 + Math.pow(Math.random(), 0.75) * 18000) * speedSpread;
+      const lonSpeedMag = (0.06 + Math.random() * 0.22) * 1.8;
+      orbitalLonSpeed = (Math.random() < 0.5 ? -1 : 1) * lonSpeedMag;
+      orbitalLonOffset = (Math.random() - 0.5) * 1.6;
+      orbitalLatOffset = (Math.random() - 0.5) * 1.2;
+      orbitalInclination = 0.2 + Math.random() * 2.2;
+      orbitalAltitudeOffset = (Math.random() - 0.5) * 32000;
+      rotationSpeed = (Math.random() - 0.5) * 4.5;
+      scaleFactor = 0.78 + Math.random() * 0.48;
+    } else {
+      burstDirection = generateIsotropicBurstDirection(spawnOrigin, roleIndex, roleCount);
+      const speedSpread = 0.45 + (roleIndex % 11) * 0.09 + Math.random() * 0.85;
+      burstSpeed = (32000 + Math.pow(Math.random(), 0.55) * 148000) * speedSpread;
+      const lonSpeedMag = (0.45 + Math.random() * 1.05) * 1.8;
+      orbitalLonSpeed = (Math.random() < 0.5 ? -1 : 1) * lonSpeedMag;
+      orbitalLonOffset = (Math.random() - 0.5) * 5.5;
+      orbitalLatOffset = (Math.random() - 0.5) * 4.5;
+      orbitalInclination = 1.5 + Math.random() * 14;
+      orbitalAltitudeOffset = (Math.random() - 0.5) * 140000;
+      rotationSpeed = (Math.random() - 0.5) * 7;
+      scaleFactor = 0.72 + Math.random() * 0.56;
+    }
+
+    const velocity = Cesium.Cartesian3.multiplyByScalar(burstDirection, burstSpeed, new Cesium.Cartesian3());
     const orbitalPhaseOffset = Math.random() * Math.PI * 2;
-    const orbitalAltitudeOffset = (Math.random() - 0.5) * 140000;
-    const rotationSpeed = (Math.random() - 0.5) * 7;
     const rotationPhase = Math.random() * Math.PI * 2;
-    const scaleFactor = 0.72 + Math.random() * 0.56;
 
     const item: KesslerDebrisItem = {
       id: `${idPrefix}-${i}`,
@@ -240,6 +305,7 @@ function generateKesslerDebrisFragments(
       rotationSpeed,
       rotationPhase,
       scaleFactor,
+      dispersionRole: role,
     };
 
     item.positionProperty = new Cesium.CallbackProperty(() => {
@@ -601,7 +667,7 @@ export default function GlobeView({
 
   useEffect(() => {
     if (kesslerSimState === 'impact' && midpointPosition) {
-      setKesslerDebris(generateKesslerDebrisFragments(midpointPosition, 45, 'kessler-debris'));
+      setKesslerDebris(generateKesslerDebrisFragments(midpointPosition, 63, 'kessler-debris'));
     } else if (kesslerSimState === 'idle') {
       setKesslerDebris([]);
       setCascadeDangerousDebrisId(null);
@@ -676,7 +742,7 @@ export default function GlobeView({
     setSecondaryImpactPosition(Cesium.Cartesian3.clone(impactPos));
     secondaryImpactTimeRef.current = Date.now();
 
-    const fragmentCount = 20 + Math.floor(Math.random() * 6);
+    const fragmentCount = 28 + Math.floor(Math.random() * 8);
     const newFragments = generateKesslerDebrisFragments(
       impactPos,
       fragmentCount,

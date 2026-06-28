@@ -26,4 +26,4 @@ export const FINAL_HIGHLIGHT_DURATION_MS = 1500;
 export const FINAL_APPROACH_MS = 3500;
 export const FINAL_COLLISION_STAGGER_MS = 700;
 export const FINAL_OBSERVE_MS = 4500;
-export const FINAL_DEBRIS_COUNTS = [11, 10, 12] as const;
+export const FINAL_DEBRIS_COUNTS = [15, 14, 17] as const;
