@@ -8,6 +8,12 @@ import ZenithIntelligencePanel from "../components/ZenithIntelligencePanel";
 import GraveyardIntroPanel from "../components/GraveyardIntroPanel";
 import GraveyardIntelligencePanel from "../components/GraveyardIntelligencePanel";
 import KesslerIntroPanel from "../components/KesslerIntroPanel";
+import {
+  type KesslerSimState,
+  CASCADE_SETTLE_MS,
+  CASCADE_APPROACH_MS,
+  CASCADE_IMPACT_MS,
+} from "../types/kessler";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -48,10 +54,11 @@ function Index({ onComplete }: IndexProps = {}) {
   const [spacecraftFocusTrigger, setSpacecraftFocusTrigger] = useState(0);
   const [selectedFeaturedObjectId, setSelectedFeaturedObjectId] = useState<string | null>(null);
   const [isKesslerTransitionComplete, setIsKesslerTransitionComplete] = useState(false);
-  const [kesslerSimState, setKesslerSimState] = useState<'idle' | 'initializing' | 'countdown' | 'frozen' | 'collision_sequence' | 'impact' | 'debris_drifting'>('idle');
+  const [kesslerSimState, setKesslerSimState] = useState<KesslerSimState>('idle');
   const [kesslerSimMessage, setKesslerSimMessage] = useState<string>('');
   const [kesslerCountdown, setKesslerCountdown] = useState<number>(5);
   const [kesslerCollisionStartTime, setKesslerCollisionStartTime] = useState<number>(0);
+  const [kesslerSecondaryCollisionStartTime, setKesslerSecondaryCollisionStartTime] = useState<number>(0);
 
   useEffect(() => {
     if (currentScreen === 'kessler') {
@@ -71,8 +78,41 @@ function Index({ onComplete }: IndexProps = {}) {
       setKesslerSimMessage('');
       setKesslerCountdown(5);
       setKesslerCollisionStartTime(0);
+      setKesslerSecondaryCollisionStartTime(0);
     }
   }, [currentScreen]);
+
+  // Phase 5: secondary cascade after first debris cloud stabilizes
+  useEffect(() => {
+    if (kesslerSimState !== 'debris_drifting') return;
+
+    const approachTimer = setTimeout(() => {
+      setKesslerSecondaryCollisionStartTime(Date.now());
+      setKesslerSimState('cascade_approach');
+    }, CASCADE_SETTLE_MS);
+
+    return () => clearTimeout(approachTimer);
+  }, [kesslerSimState]);
+
+  useEffect(() => {
+    if (kesslerSimState !== 'cascade_approach') return;
+
+    const impactTimer = setTimeout(() => {
+      setKesslerSimState('cascade_impact');
+    }, CASCADE_APPROACH_MS);
+
+    return () => clearTimeout(impactTimer);
+  }, [kesslerSimState]);
+
+  useEffect(() => {
+    if (kesslerSimState !== 'cascade_impact') return;
+
+    const escalateTimer = setTimeout(() => {
+      setKesslerSimState('cascade_escalating');
+    }, CASCADE_IMPACT_MS);
+
+    return () => clearTimeout(escalateTimer);
+  }, [kesslerSimState]);
 
   useEffect(() => {
     if (kesslerSimState !== 'countdown') return;
@@ -397,6 +437,7 @@ function Index({ onComplete }: IndexProps = {}) {
               kesslerSimState={kesslerSimState}
               kesslerCountdown={kesslerCountdown}
               kesslerCollisionStartTime={kesslerCollisionStartTime}
+              kesslerSecondaryCollisionStartTime={kesslerSecondaryCollisionStartTime}
             />
             <NavigationPanel 
               active={showGlobe && currentScreen === 'home'} 

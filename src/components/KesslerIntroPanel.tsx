@@ -1,12 +1,59 @@
 import { ArrowLeft, Cpu, Activity, Play, BarChart2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { type KesslerSimState } from "../types/kessler";
 
 interface KesslerIntroPanelProps {
   active?: boolean;
   onBack?: () => void;
-  simState?: 'idle' | 'initializing' | 'countdown' | 'frozen' | 'collision_sequence' | 'impact' | 'debris_drifting';
+  simState?: KesslerSimState;
   simMessage?: string;
   simCountdown?: number;
   onStartSim?: () => void;
+}
+
+function AnimatedNumber({ value, duration = 900 }: { value: number; duration?: number }) {
+  const [display, setDisplay] = useState(value);
+  const prevRef = useRef(value);
+  const frameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const from = prevRef.current;
+    const to = value;
+    if (from === to) return;
+
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min((now - start) / duration, 1);
+      const eased = t * t * (3 - 2 * t);
+      setDisplay(Math.round(from + (to - from) * eased));
+      if (t < 1) {
+        frameRef.current = requestAnimationFrame(tick);
+      } else {
+        prevRef.current = to;
+      }
+    };
+
+    frameRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+    };
+  }, [value, duration]);
+
+  return <>{display}</>;
+}
+
+function getSnapshotValues(simState: KesslerSimState) {
+  switch (simState) {
+    case 'debris_drifting':
+      return { satellites: 18, debris: 45, collisions: 'Monitoring', events: 1 };
+    case 'cascade_approach':
+    case 'cascade_impact':
+      return { satellites: 18, debris: 45, collisions: 'Monitoring', events: 1 };
+    case 'cascade_escalating':
+      return { satellites: 17, debris: 70, collisions: 'High Risk', events: 2 };
+    default:
+      return { satellites: 20, debris: 0, collisions: simState === 'idle' || simState === 'initializing' ? '0' : '1', events: 0 };
+  }
 }
 
 export default function KesslerIntroPanel({
@@ -17,6 +64,9 @@ export default function KesslerIntroPanel({
   simCountdown = 5,
   onStartSim,
 }: KesslerIntroPanelProps) {
+  const snapshot = getSnapshotValues(simState);
+  const isCascadePhase = simState === 'cascade_approach' || simState === 'cascade_impact' || simState === 'cascade_escalating';
+
   return (
     <div
       className={`fixed left-6 md:left-8 top-4 md:top-5 z-50 flex flex-col w-[250px] md:w-[280px] h-[calc(100vh-2.5rem)] select-none font-inter transition-all duration-1000 ease-out transform ${
@@ -63,6 +113,9 @@ export default function KesslerIntroPanel({
             simState === 'frozen' ? "border-red-500/30 bg-red-950/10" :
             simState === 'collision_sequence' || simState === 'impact' ? "border-orange-500/25 bg-orange-950/5" :
             simState === 'debris_drifting' ? "border-red-500/40 bg-red-950/15" :
+            simState === 'cascade_approach' ? "border-orange-500/30 bg-orange-950/10" :
+            simState === 'cascade_impact' ? "border-orange-500/40 bg-orange-950/15" :
+            simState === 'cascade_escalating' ? "border-red-500/50 bg-red-950/20" :
             "border-emerald-500/20 bg-emerald-950/5"
           }`}
         >
@@ -74,6 +127,9 @@ export default function KesslerIntroPanel({
                 simState === 'frozen' ? "text-red-400" :
                 simState === 'collision_sequence' || simState === 'impact' ? "text-orange-400 animate-pulse" :
                 simState === 'debris_drifting' ? "text-red-400 animate-pulse" :
+                simState === 'cascade_approach' ? "text-orange-400 animate-pulse" :
+                simState === 'cascade_impact' ? "text-orange-500 animate-pulse" :
+                simState === 'cascade_escalating' ? "text-red-500 animate-pulse" :
                 "text-emerald-400"
               }`} />
               <span className="text-[10px] md:text-[11px] font-bold font-inter tracking-[0.12em] text-slate-200 uppercase">
@@ -116,6 +172,24 @@ export default function KesslerIntroPanel({
               <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-red-500/15 border border-red-500/35 text-[9px] md:text-[10px] font-bold text-red-400 tracking-wider uppercase">
                 <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-ping" />
                 COLLISION DETECTED
+              </span>
+            )}
+            {simState === 'cascade_approach' && (
+              <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-orange-500/15 border border-orange-500/30 text-[9px] md:text-[10px] font-bold text-orange-400 tracking-wider uppercase">
+                <span className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />
+                CASCADE DETECTED
+              </span>
+            )}
+            {simState === 'cascade_impact' && (
+              <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-orange-500/20 border border-orange-500/40 text-[9px] md:text-[10px] font-bold text-orange-500 tracking-wider uppercase">
+                <span className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-ping" />
+                SECONDARY IMPACT
+              </span>
+            )}
+            {simState === 'cascade_escalating' && (
+              <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-red-500/20 border border-red-500/40 text-[9px] md:text-[10px] font-bold text-red-500 tracking-wider uppercase">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
+                CASCADE ESCALATING
               </span>
             )}
           </div>
@@ -175,6 +249,32 @@ export default function KesslerIntroPanel({
                 Monitoring the surrounding orbital environment for potential secondary impacts.
               </p>
             )}
+            {simState === 'cascade_approach' && (
+              <p className="text-orange-300/90 font-medium">
+                Dangerous debris fragment identified within the initial collision cloud.
+                <br />
+                Secondary collision trajectory detected.
+                <br />
+                Operational satellite convergence in progress...
+              </p>
+            )}
+            {simState === 'cascade_impact' && (
+              <p className="text-orange-300/90 font-medium">
+                Secondary orbital collision in progress.
+                <br />
+                Debris fragment impact confirmed.
+                <br />
+                Generating secondary debris cloud...
+              </p>
+            )}
+            {simState === 'cascade_escalating' && (
+              <p className="text-red-300/90 font-medium">
+                A debris fragment from the initial collision has destroyed another operational satellite.
+                <br />
+                <br />
+                The orbital environment is becoming increasingly unstable as debris density continues to rise.
+              </p>
+            )}
           </div>
         </div>
 
@@ -190,20 +290,31 @@ export default function KesslerIntroPanel({
             <div className="flex justify-between items-center py-0.5 border-b border-purple-500/5">
               <span className="text-slate-400 font-normal">Active Satellites</span>
               <span className="text-slate-100 font-bold text-[13px] md:text-[14px] transition-all duration-300">
-                {simState === 'debris_drifting' ? '18' : '20'}
+                <AnimatedNumber value={snapshot.satellites} />
               </span>
             </div>
             <div className="flex justify-between items-center py-0.5 border-b border-purple-500/5">
               <span className="text-slate-400 font-normal">Debris Objects</span>
               <span className="text-slate-100 font-bold text-[13px] md:text-[14px] transition-all duration-300">
-                {simState === 'debris_drifting' ? '45' : '0'}
+                <AnimatedNumber value={snapshot.debris} />
               </span>
             </div>
             <div className="flex justify-between items-center py-0.5 border-b border-purple-500/5">
               <span className="text-slate-400 font-normal">Predicted Collisions</span>
+              <span className={`font-bold text-[13px] md:text-[14px] transition-all duration-500 ${
+                snapshot.collisions === 'High Risk' ? 'text-red-400' : 'text-slate-100'
+              }`}>
+                {typeof snapshot.collisions === 'number' ? (
+                  <AnimatedNumber value={snapshot.collisions} />
+                ) : (
+                  snapshot.collisions
+                )}
+              </span>
+            </div>
+            <div className="flex justify-between items-center py-0.5 border-b border-purple-500/5">
+              <span className="text-slate-400 font-normal">Collision Events</span>
               <span className="text-slate-100 font-bold text-[13px] md:text-[14px] transition-all duration-300">
-                {simState === 'debris_drifting' ? 'Monitoring' :
-                 simState === 'idle' || simState === 'initializing' ? '0' : '1'}
+                <AnimatedNumber value={snapshot.events} />
               </span>
             </div>
             <div className="flex justify-between items-center py-0.5">
@@ -214,6 +325,8 @@ export default function KesslerIntroPanel({
                 simState === 'frozen' ? "text-red-400" :
                 simState === 'collision_sequence' || simState === 'impact' ? "text-orange-400 animate-pulse" :
                 simState === 'debris_drifting' ? "text-red-400 animate-pulse" :
+                simState === 'cascade_approach' || simState === 'cascade_impact' ? "text-orange-400 animate-pulse" :
+                simState === 'cascade_escalating' ? "text-red-500 animate-pulse" :
                 "text-purple-400"
               }`}>
                 {simState === 'idle' && 'Standby'}
@@ -223,6 +336,9 @@ export default function KesslerIntroPanel({
                 {simState === 'collision_sequence' && 'Intercepting'}
                 {simState === 'impact' && 'Impact'}
                 {simState === 'debris_drifting' && 'Collision Detected'}
+                {simState === 'cascade_approach' && 'Cascade Detected'}
+                {simState === 'cascade_impact' && 'Secondary Impact'}
+                {simState === 'cascade_escalating' && 'Cascade Escalating'}
               </span>
             </div>
           </div>
@@ -237,7 +353,7 @@ export default function KesslerIntroPanel({
           className={`w-full relative group overflow-hidden rounded-xl border px-4 py-3 md:py-3.5 text-center font-inter text-xs md:text-sm font-bold uppercase tracking-[0.15em] transition-all duration-300 ${
             simState === 'idle'
               ? "border-purple-500/30 bg-gradient-to-r from-purple-950/20 via-fuchsia-950/20 to-rose-950/20 text-white shadow-[0_0_15px_rgba(168,85,247,0.15)] hover:border-purple-400/50 hover:shadow-[0_0_25px_rgba(168,85,247,0.3)] active:scale-[0.98] active:opacity-90 cursor-pointer"
-              : simState === 'debris_drifting'
+              : simState === 'debris_drifting' || isCascadePhase
               ? "border-red-500/10 bg-red-950/20 text-red-500 opacity-60 cursor-not-allowed"
               : "border-slate-500/10 bg-slate-950/20 text-slate-500 opacity-60 cursor-not-allowed"
           }`}
@@ -281,6 +397,24 @@ export default function KesslerIntroPanel({
               <>
                 <Activity className="w-3.5 h-3.5 text-red-500" />
                 <span>Collision Detected</span>
+              </>
+            )}
+            {simState === 'cascade_approach' && (
+              <>
+                <Activity className="w-3.5 h-3.5 text-orange-400 animate-pulse" />
+                <span>Cascade Detected</span>
+              </>
+            )}
+            {simState === 'cascade_impact' && (
+              <>
+                <Activity className="w-3.5 h-3.5 text-orange-500 animate-pulse" />
+                <span>Secondary Impact</span>
+              </>
+            )}
+            {simState === 'cascade_escalating' && (
+              <>
+                <Activity className="w-3.5 h-3.5 text-red-500 animate-pulse" />
+                <span>Cascade Escalating</span>
               </>
             )}
           </span>

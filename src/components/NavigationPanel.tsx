@@ -10,21 +10,21 @@ export default function NavigationPanel({ active = false, onSelectFeature }: Nav
     <>
       {/* Top Header Section */}
       <header
-        className={`fixed left-6 md:left-8 top-6 md:top-8 z-50 flex flex-col pointer-events-none select-none transition-all duration-1000 ease-out transform ${
+        className={`fixed left-6 md:left-8 top-6 md:top-8 z-50 flex flex-col pointer-events-none select-none antialiased transition-all duration-1000 ease-out transform ${
           active ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-6"
         }`}
         style={{ transitionDelay: "100ms" }}
       >
-        <h2 className="text-[26px] md:text-[32px] font-semibold font-orbitron tracking-[0.45em] text-white uppercase drop-shadow-[0_0_12px_rgba(255,255,255,0.15)]">
-          Zenith
+        <h2 className="text-[26px] md:text-[32px] font-extrabold font-inter uppercase tracking-[0.14em] text-white drop-shadow-[0_0_12px_rgba(255,255,255,0.15)]">
+          ZENITH
         </h2>
-        <p className="text-[10px] md:text-[11px] font-medium font-outfit tracking-[0.18em] text-slate-400/85 uppercase mt-1.5">
+        <p className="text-[10px] md:text-[11px] font-normal font-inter tracking-[0.01em] text-slate-300/90 leading-relaxed mt-1.5">
           Visualizing Earth's orbital environment
         </p>
       </header>
 
       <div
-        className={`fixed left-6 md:left-8 z-50 flex flex-col justify-between w-[240px] md:w-[260px] h-[80vh] max-h-[600px] select-none font-outfit transition-all duration-1000 ${
+        className={`fixed left-6 md:left-8 z-50 flex flex-col justify-between w-[240px] md:w-[260px] h-[80vh] max-h-[600px] select-none font-inter antialiased transition-all duration-1000 ${
           active ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         }`}
         style={{ top: "calc(50% + 50px)", transform: "translateY(-50%)" }}
@@ -47,10 +47,10 @@ export default function NavigationPanel({ active = false, onSelectFeature }: Nav
 
           {/* Text Content */}
           <div className="flex-1 ml-3 pr-1 z-10">
-            <h3 className="text-[10px] md:text-xs font-semibold font-orbitron tracking-[0.15em] text-slate-200 uppercase mb-0.5 group-hover:text-white transition-colors duration-300">
+            <h3 className="text-[11px] md:text-[13px] font-bold font-inter uppercase tracking-[0.1em] text-slate-100 mb-0.5 group-hover:text-white transition-colors duration-300">
               Zenith View
             </h3>
-            <p className="text-[10px] md:text-[11px] font-normal font-outfit text-slate-400/90 leading-tight">
+            <p className="text-[10px] md:text-[11px] font-medium font-inter text-slate-300/70 leading-relaxed">
               See the sky above any location in real time
             </p>
           </div>
@@ -74,10 +74,10 @@ export default function NavigationPanel({ active = false, onSelectFeature }: Nav
 
           {/* Text Content */}
           <div className="flex-1 ml-3 pr-1 z-10">
-            <h3 className="text-[10px] md:text-xs font-semibold font-orbitron tracking-[0.15em] text-slate-200 uppercase mb-0.5 group-hover:text-white transition-colors duration-300">
+            <h3 className="text-[11px] md:text-[13px] font-bold font-inter uppercase tracking-[0.1em] text-slate-100 mb-0.5 group-hover:text-white transition-colors duration-300">
               Graveyard Mode
             </h3>
-            <p className="text-[10px] md:text-[11px] font-normal font-outfit text-slate-400/90 leading-tight">
+            <p className="text-[10px] md:text-[11px] font-medium font-inter text-slate-300/70 leading-relaxed">
               Discover inactive satellites and orbital debris
             </p>
           </div>
@@ -101,10 +101,10 @@ export default function NavigationPanel({ active = false, onSelectFeature }: Nav
 
           {/* Text Content */}
           <div className="flex-1 ml-3 pr-1 z-10">
-            <h3 className="text-[10px] md:text-xs font-semibold font-orbitron tracking-[0.15em] text-slate-200 uppercase mb-0.5 group-hover:text-white transition-colors duration-300">
+            <h3 className="text-[11px] md:text-[13px] font-bold font-inter uppercase tracking-[0.1em] text-slate-100 mb-0.5 group-hover:text-white transition-colors duration-300">
               Kessler Simulation
             </h3>
-            <p className="text-[10px] md:text-[11px] font-normal font-outfit text-slate-400/90 leading-tight">
+            <p className="text-[10px] md:text-[11px] font-medium font-inter text-slate-300/70 leading-relaxed">
               Simulate cascading orbital collisions
             </p>
           </div>
@@ -123,10 +123,10 @@ export default function NavigationPanel({ active = false, onSelectFeature }: Nav
       >
         <Compass className="w-4.5 h-4.5 text-slate-400/80 mt-0.5 flex-shrink-0" />
         <div className="flex flex-col gap-0.5">
-          <span className="text-[8px] md:text-[9px] font-semibold font-orbitron tracking-[0.18em] text-slate-200 uppercase">
+          <span className="text-[8px] md:text-[9px] font-normal font-inter uppercase tracking-[0.16em] text-slate-200">
             Explore. Understand. Protect.
           </span>
-          <span className="text-[8px] md:text-[9px] font-light font-outfit tracking-[0.15em] text-slate-400">
+          <span className="text-[8px] md:text-[9px] font-light font-inter tracking-[0.02em] text-slate-400/85 leading-relaxed">
             Our orbital future depends on it.
           </span>
         </div>

@@ -3,6 +3,7 @@ import * as Cesium from 'cesium';
 import { Viewer, ImageryLayer, Entity, BillboardGraphics, CylinderGraphics, PointGraphics, PolylineGraphics } from 'resium';
 import { useSpacecraftTracking } from '../hooks/useSpacecraftTracking';
 import { useOrbitalDebris } from '../hooks/useOrbitalDebris';
+import { type KesslerSimState, CASCADE_APPROACH_MS } from '../types/kessler';
 
 Cesium.Ion.defaultAccessToken = import.meta.env.VITE_CESIUM_ION_TOKEN ?? '';
 
@@ -15,6 +16,68 @@ const SHARD_SVGS = [
 const FLASH_SVG = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"><radialGradient id="g" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="%23ffffff" stop-opacity="1"/><stop offset="30%" stop-color="%23fef08a" stop-opacity="0.9"/><stop offset="70%" stop-color="%23f97316" stop-opacity="0.4"/><stop offset="100%" stop-color="%23ef4444" stop-opacity="0"/></radialGradient><circle cx="64" cy="64" r="60" fill="url(%23g)"/></svg>`;
 
 const SHOCKWAVE_SVG = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"><circle cx="64" cy="64" r="60" fill="none" stroke="%23f8fafc" stroke-width="3" opacity="0.9"/></svg>`;
+
+const CRIMSON_DEBRIS_GLOW = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><radialGradient id="rg" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="%23fca5a5" stop-opacity="0.95"/><stop offset="55%" stop-color="%23ef4444" stop-opacity="0.45"/><stop offset="100%" stop-color="%237f1d1d" stop-opacity="0"/></radialGradient><circle cx="16" cy="16" r="14" fill="url(%23rg)"/></svg>`;
+
+const BLUE_TARGET_GLOW = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"><radialGradient id="bg" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="%2393c5fd" stop-opacity="0.9"/><stop offset="50%" stop-color="%233b82f6" stop-opacity="0.35"/><stop offset="100%" stop-color="%231e3a8a" stop-opacity="0"/></radialGradient><circle cx="64" cy="64" r="58" fill="url(%23bg)"/></svg>`;
+
+interface KesslerDebrisItem {
+  id: string;
+  positionProperty: Cesium.CallbackProperty;
+  image: string;
+  velocity: Cesium.Cartesian3;
+  spawnOrigin: Cesium.Cartesian3;
+  spawnTime: number;
+  isDangerous?: boolean;
+}
+
+function getDebrisWorldPosition(debris: KesslerDebrisItem, atTimeMs: number = Date.now()) {
+  const elapsedSec = (atTimeMs - debris.spawnTime) / 1000;
+  const offset = Cesium.Cartesian3.multiplyByScalar(
+    debris.velocity,
+    elapsedSec,
+    new Cesium.Cartesian3()
+  );
+  return Cesium.Cartesian3.add(debris.spawnOrigin, offset, new Cesium.Cartesian3());
+}
+
+function generateKesslerDebrisFragments(
+  origin: Cesium.Cartesian3,
+  count: number,
+  idPrefix: string,
+  spawnTime: number = Date.now()
+): KesslerDebrisItem[] {
+  const debrisList: KesslerDebrisItem[] = [];
+  for (let i = 0; i < count; i++) {
+    const dir = new Cesium.Cartesian3(
+      Math.random() - 0.5,
+      Math.random() - 0.5,
+      Math.random() - 0.5
+    );
+    Cesium.Cartesian3.normalize(dir, dir);
+    const speed = 4000 + Math.random() * 14000;
+    const velocity = Cesium.Cartesian3.multiplyByScalar(dir, speed, new Cesium.Cartesian3());
+    const spawnOrigin = Cesium.Cartesian3.clone(origin);
+
+    const positionProperty = new Cesium.CallbackProperty(() => {
+      return getDebrisWorldPosition({
+        velocity,
+        spawnOrigin,
+        spawnTime,
+      } as KesslerDebrisItem);
+    }, false);
+
+    debrisList.push({
+      id: `${idPrefix}-${i}`,
+      positionProperty,
+      image: SHARD_SVGS[i % 3],
+      velocity,
+      spawnOrigin,
+      spawnTime,
+    });
+  }
+  return debrisList;
+}
 
 const baseSpeed = 1.8;
 
@@ -39,9 +102,10 @@ interface GlobeViewProps {
   selectedFeaturedObjectId?: string | null;
   onSelectFeaturedObject?: (id: string | null) => void;
   isKessler?: boolean;
-  kesslerSimState?: 'idle' | 'initializing' | 'countdown' | 'frozen' | 'collision_sequence' | 'impact' | 'debris_drifting';
+  kesslerSimState?: KesslerSimState;
   kesslerCountdown?: number;
   kesslerCollisionStartTime?: number;
+  kesslerSecondaryCollisionStartTime?: number;
 }
 
 export default function GlobeView({ 
@@ -58,6 +122,7 @@ export default function GlobeView({
   kesslerSimState = 'idle',
   kesslerCountdown = 5,
   kesslerCollisionStartTime = 0,
+  kesslerSecondaryCollisionStartTime = 0,
 }: GlobeViewProps) {
   const { spacecrafts } = useSpacecraftTracking();
   const { debris } = useOrbitalDebris(isGraveyard);
@@ -115,12 +180,23 @@ export default function GlobeView({
   const kesslerSimStateRef = useRef(kesslerSimState);
   const kesslerCountdownRef = useRef(kesslerCountdown);
   const kesslerCollisionStartTimeRef = useRef(kesslerCollisionStartTime);
+  const kesslerSecondaryCollisionStartTimeRef = useRef(kesslerSecondaryCollisionStartTime);
   const freezeSecondsRef = useRef<number | null>(null);
 
   const [polylinePositions, setPolylinePositions] = useState<any>(null);
   const [polylineMaterial, setPolylineMaterial] = useState<any>(null);
   const [midpointPosition, setMidpointPosition] = useState<Cesium.Cartesian3 | null>(null);
-  const [kesslerDebris, setKesslerDebris] = useState<any[]>([]);
+  const [kesslerDebris, setKesslerDebris] = useState<KesslerDebrisItem[]>([]);
+  const kesslerDebrisRef = useRef<KesslerDebrisItem[]>([]);
+
+  const cascadeDangerousDebrisIdRef = useRef<string | null>(null);
+  const cascadeTargetSatIdRef = useRef<string | null>(null);
+  const cascadeSelectionDoneRef = useRef(false);
+  const cascadeImpactHandledRef = useRef(false);
+  const secondaryImpactTimeRef = useRef<number>(0);
+  const [secondaryImpactPosition, setSecondaryImpactPosition] = useState<Cesium.Cartesian3 | null>(null);
+  const [cascadeTargetSatId, setCascadeTargetSatId] = useState<string | null>(null);
+  const [cascadeDangerousDebrisId, setCascadeDangerousDebrisId] = useState<string | null>(null);
 
   useEffect(() => {
     kesslerSimStateRef.current = kesslerSimState;
@@ -140,6 +216,22 @@ export default function GlobeView({
   useEffect(() => {
     kesslerCollisionStartTimeRef.current = kesslerCollisionStartTime;
   }, [kesslerCollisionStartTime]);
+
+  useEffect(() => {
+    kesslerSecondaryCollisionStartTimeRef.current = kesslerSecondaryCollisionStartTime;
+  }, [kesslerSecondaryCollisionStartTime]);
+
+  useEffect(() => {
+    kesslerDebrisRef.current = kesslerDebris;
+  }, [kesslerDebris]);
+
+  useEffect(() => {
+    cascadeDangerousDebrisIdRef.current = cascadeDangerousDebrisId;
+  }, [cascadeDangerousDebrisId]);
+
+  useEffect(() => {
+    cascadeTargetSatIdRef.current = cascadeTargetSatId;
+  }, [cascadeTargetSatId]);
 
   useEffect(() => {
     const featACarto = Cesium.Cartographic.fromDegrees(-95.0, 39.5, 680000);
@@ -186,6 +278,70 @@ export default function GlobeView({
     }, false);
   }, []);
 
+  const secondaryFlashScaleProperty = useMemo(() => {
+    return new Cesium.CallbackProperty(() => {
+      const elapsed = Date.now() - secondaryImpactTimeRef.current;
+      if (elapsed < 0) return 0.0;
+      const progress = elapsed / 600;
+      if (progress > 1.0) return 0.0;
+      return 5.0 * (1.0 - progress);
+    }, false);
+  }, []);
+
+  const secondaryShockwaveScaleProperty = useMemo(() => {
+    return new Cesium.CallbackProperty(() => {
+      const elapsed = Date.now() - secondaryImpactTimeRef.current;
+      if (elapsed < 0) return 0.0;
+      const progress = elapsed / 800;
+      if (progress > 1.0) return 0.0;
+      return 10.0 * progress;
+    }, false);
+  }, []);
+
+  const secondaryShockwaveColorProperty = useMemo(() => {
+    return new Cesium.CallbackProperty(() => {
+      const elapsed = Date.now() - secondaryImpactTimeRef.current;
+      if (elapsed < 0) return Cesium.Color.WHITE.withAlpha(0.0);
+      const progress = elapsed / 800;
+      if (progress > 1.0) return Cesium.Color.WHITE.withAlpha(0.0);
+      return Cesium.Color.fromCssColorString('#fb923c').withAlpha(0.8 * (1.0 - progress));
+    }, false);
+  }, []);
+
+  const dangerousDebrisPulseScale = useMemo(() => {
+    return new Cesium.CallbackProperty(() => {
+      const elapsed = Date.now() % 1200;
+      const progress = elapsed / 1200;
+      return 1.15 + 0.2 * Math.sin(progress * Math.PI * 2);
+    }, false);
+  }, []);
+
+  const dangerousDebrisPulseColor = useMemo(() => {
+    return new Cesium.CallbackProperty(() => {
+      const elapsed = Date.now() % 1200;
+      const progress = elapsed / 1200;
+      const alpha = 0.65 + 0.35 * Math.sin(progress * Math.PI * 2);
+      return Cesium.Color.fromCssColorString('#ef4444').withAlpha(alpha);
+    }, false);
+  }, []);
+
+  const targetSatPulseScale = useMemo(() => {
+    return new Cesium.CallbackProperty(() => {
+      const elapsed = Date.now() % 1400;
+      const progress = elapsed / 1400;
+      return 0.95 + 0.18 * Math.sin(progress * Math.PI * 2);
+    }, false);
+  }, []);
+
+  const targetSatPulseColor = useMemo(() => {
+    return new Cesium.CallbackProperty(() => {
+      const elapsed = Date.now() % 1400;
+      const progress = elapsed / 1400;
+      const alpha = 0.75 + 0.25 * Math.sin(progress * Math.PI * 2);
+      return Cesium.Color.fromCssColorString('#60a5fa').withAlpha(alpha);
+    }, false);
+  }, []);
+
   useEffect(() => {
     if (!viewer) return;
 
@@ -218,35 +374,88 @@ export default function GlobeView({
 
   useEffect(() => {
     if (kesslerSimState === 'impact' && midpointPosition) {
-      const debrisList = [];
-      for (let i = 0; i < 45; i++) {
-        const dir = new Cesium.Cartesian3(
-          Math.random() - 0.5,
-          Math.random() - 0.5,
-          Math.random() - 0.5
-        );
-        Cesium.Cartesian3.normalize(dir, dir);
-        const speed = 4000 + Math.random() * 14000;
-        const velocity = Cesium.Cartesian3.multiplyByScalar(dir, speed, new Cesium.Cartesian3());
-
-        const spawnTime = Date.now();
-        const positionProperty = new Cesium.CallbackProperty(() => {
-          const elapsedSec = (Date.now() - spawnTime) / 1000;
-          const offset = Cesium.Cartesian3.multiplyByScalar(velocity, elapsedSec, new Cesium.Cartesian3());
-          return Cesium.Cartesian3.add(midpointPosition, offset, new Cesium.Cartesian3());
-        }, false);
-
-        debrisList.push({
-          id: `kessler-debris-${i}`,
-          positionProperty,
-          image: SHARD_SVGS[i % 3],
-        });
-      }
-      setKesslerDebris(debrisList);
+      setKesslerDebris(generateKesslerDebrisFragments(midpointPosition, 45, 'kessler-debris'));
     } else if (kesslerSimState === 'idle') {
       setKesslerDebris([]);
+      setCascadeDangerousDebrisId(null);
+      setCascadeTargetSatId(null);
+      setSecondaryImpactPosition(null);
+      cascadeSelectionDoneRef.current = false;
+      cascadeImpactHandledRef.current = false;
+      cascadeDangerousDebrisIdRef.current = null;
+      cascadeTargetSatIdRef.current = null;
     }
   }, [kesslerSimState, midpointPosition]);
+
+  // Phase 5: select dangerous debris and nearest target satellite
+  useEffect(() => {
+    if (kesslerSimState !== 'cascade_approach' || cascadeSelectionDoneRef.current) return;
+    if (kesslerDebris.length === 0 || !viewer) return;
+
+    cascadeSelectionDoneRef.current = true;
+
+    const randomIdx = Math.floor(Math.random() * kesslerDebris.length);
+    const dangerousDebris = kesslerDebris[randomIdx];
+    const debrisPos = getDebrisWorldPosition(dangerousDebris);
+
+    let nearestId: string | null = null;
+    let nearestDist = Infinity;
+
+    for (const sat of kesslerSatellitesWithProperties) {
+      if (sat.isFeatured) continue;
+      const time = viewer.clock.currentTime;
+      const satPos = sat.positionProperty?.getValue?.(time);
+      if (!satPos) continue;
+      const dist = Cesium.Cartesian3.distance(debrisPos, satPos);
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearestId = sat.id;
+      }
+    }
+
+    if (!nearestId) {
+      nearestId = kesslerSatellitesWithProperties.find((s) => !s.isFeatured)?.id ?? null;
+    }
+
+    setCascadeDangerousDebrisId(dangerousDebris.id);
+    setCascadeTargetSatId(nearestId);
+    cascadeDangerousDebrisIdRef.current = dangerousDebris.id;
+    cascadeTargetSatIdRef.current = nearestId;
+
+    setKesslerDebris((prev) =>
+      prev.map((d) => ({
+        ...d,
+        isDangerous: d.id === dangerousDebris.id,
+      }))
+    );
+  }, [kesslerSimState, kesslerDebris.length, viewer, kesslerSatellitesWithProperties]);
+
+  // Phase 5: secondary impact — remove colliding objects and spawn second debris cloud
+  useEffect(() => {
+    if (kesslerSimState !== 'cascade_impact' || cascadeImpactHandledRef.current) return;
+
+    const dangerousId = cascadeDangerousDebrisIdRef.current;
+    const dangerous = kesslerDebrisRef.current.find((d) => d.id === dangerousId);
+    if (!dangerous) return;
+
+    cascadeImpactHandledRef.current = true;
+
+    const impactPos = getDebrisWorldPosition(dangerous);
+    setSecondaryImpactPosition(Cesium.Cartesian3.clone(impactPos));
+    secondaryImpactTimeRef.current = Date.now();
+
+    const fragmentCount = 20 + Math.floor(Math.random() * 6);
+    const newFragments = generateKesslerDebrisFragments(
+      impactPos,
+      fragmentCount,
+      'kessler-debris-2'
+    );
+
+    setKesslerDebris((prev) => [
+      ...prev.filter((d) => d.id !== dangerousId),
+      ...newFragments,
+    ]);
+  }, [kesslerSimState]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !viewer) return;
@@ -321,7 +530,7 @@ export default function GlobeView({
           seconds = freezeSecondsRef.current;
         }
 
-        // Standard satellites revolve normally
+        // Standard satellites revolve normally (with cascade convergence for target satellite)
         if (!sat.isFeatured) {
           const lonAngle = sat.initialLon + seconds * sat.speed * baseSpeed;
           let lon = lonAngle % 360;
@@ -330,7 +539,26 @@ export default function GlobeView({
 
           const lat = sat.latBase + sat.inclination * Math.sin(lonAngle * Math.PI / 180 + sat.phaseOffset);
           const carto = Cesium.Cartographic.fromDegrees(lon, lat, sat.altitude);
-          return Cesium.Ellipsoid.WGS84.cartographicToCartesian(carto);
+          const orbitalPos = Cesium.Ellipsoid.WGS84.cartographicToCartesian(carto);
+
+          const simState = kesslerSimStateRef.current;
+          if (
+            sat.id === cascadeTargetSatIdRef.current &&
+            (simState === 'cascade_approach' || simState === 'cascade_impact')
+          ) {
+            const dangerous = kesslerDebrisRef.current.find(
+              (d) => d.id === cascadeDangerousDebrisIdRef.current
+            );
+            if (dangerous) {
+              const elapsed = Date.now() - kesslerSecondaryCollisionStartTimeRef.current;
+              const debrisPos = getDebrisWorldPosition(dangerous);
+              const progress = Math.min(elapsed / CASCADE_APPROACH_MS, 1);
+              const pEased = progress * progress * (3 - 2 * progress);
+              return Cesium.Cartesian3.lerp(orbitalPos, debrisPos, pEased, new Cesium.Cartesian3());
+            }
+          }
+
+          return orbitalPos;
         }
 
         // Featured satellites: calculate static start position
@@ -389,6 +617,15 @@ export default function GlobeView({
           const colorStr = active ? '#fbbf24' : '#f59e0b';
           return Cesium.Color.fromCssColorString(colorStr).withAlpha(pulseGlow);
         } else {
+          if (
+            sat.id === cascadeTargetSatIdRef.current &&
+            kesslerSimStateRef.current === 'cascade_approach'
+          ) {
+            const elapsed = Date.now() % 1400;
+            const progress = elapsed / 1400;
+            const alpha = 0.85 + 0.15 * Math.sin(progress * Math.PI * 2);
+            return Cesium.Color.fromCssColorString('#93c5fd').withAlpha(alpha);
+          }
           return Cesium.Color.WHITE.withAlpha(0.95);
         }
       }, false);
@@ -2234,7 +2471,7 @@ export default function GlobeView({
     }}>
       {/* Transparent Viewer positioned above the background star layer */}
       <div 
-        className={`globe-viewer-wrapper ${targetLocation ? "has-target" : ""} ${isGraveyard ? "in-graveyard" : ""} ${selectedFeaturedObjectId ? "has-featured" : ""} ${isKessler ? "in-kessler" : ""} ${kesslerSimState === 'impact' ? "camera-shake-active" : ""}`}
+        className={`globe-viewer-wrapper ${targetLocation ? "has-target" : ""} ${isGraveyard ? "in-graveyard" : ""} ${selectedFeaturedObjectId ? "has-featured" : ""} ${isKessler ? "in-kessler" : ""} ${kesslerSimState === 'impact' || kesslerSimState === 'cascade_impact' ? "camera-shake-active" : ""}`}
         style={{ 
           opacity: (active && isGlobeReady) ? 1 : 0,
         }}
@@ -2262,9 +2499,26 @@ export default function GlobeView({
           {/* Kessler Simulation Satellites */}
           {isKessler && kesslerSatellitesWithProperties.map((sat) => {
             const isFeatured = sat.isFeatured;
-            
-            // Hide featured satellites after impact occurs
-            if (isFeatured && (kesslerSimState === 'impact' || kesslerSimState === 'debris_drifting')) {
+            const isPostFirstImpact = [
+              'impact',
+              'debris_drifting',
+              'cascade_approach',
+              'cascade_impact',
+              'cascade_escalating',
+            ].includes(kesslerSimState);
+
+            if (isFeatured && isPostFirstImpact) {
+              return null;
+            }
+
+            const isCascadeTarget =
+              sat.id === cascadeTargetSatId &&
+              (kesslerSimState === 'cascade_approach' || kesslerSimState === 'cascade_impact');
+
+            if (
+              sat.id === cascadeTargetSatId &&
+              (kesslerSimState === 'cascade_impact' || kesslerSimState === 'cascade_escalating')
+            ) {
               return null;
             }
 
@@ -2273,20 +2527,38 @@ export default function GlobeView({
             if (!img) return null;
 
             return (
-              <Entity
-                key={sat.id}
-                id={sat.id}
-                name={sat.name}
-                position={sat.positionProperty as any}
-              >
-                <BillboardGraphics
-                  image={img}
-                  color={sat.colorProperty as any}
-                  scale={isFeatured ? (sat.scaleProperty as any) : 0.75}
-                  width={96}
-                  height={96}
-                />
-              </Entity>
+              <Fragment key={sat.id}>
+                {isCascadeTarget && kesslerSimState === 'cascade_approach' && (
+                  <Entity id={`${sat.id}-target-glow`} position={sat.positionProperty as any}>
+                    <BillboardGraphics
+                      image={BLUE_TARGET_GLOW}
+                      scale={targetSatPulseScale as any}
+                      color={targetSatPulseColor as any}
+                      width={128}
+                      height={128}
+                    />
+                  </Entity>
+                )}
+                <Entity
+                  id={sat.id}
+                  name={sat.name}
+                  position={sat.positionProperty as any}
+                >
+                  <BillboardGraphics
+                    image={img}
+                    color={sat.colorProperty as any}
+                    scale={
+                      isFeatured
+                        ? (sat.scaleProperty as any)
+                        : isCascadeTarget
+                        ? (targetSatPulseScale as any)
+                        : 0.75
+                    }
+                    width={96}
+                    height={96}
+                  />
+                </Entity>
+              </Fragment>
             );
           })}
 
@@ -2333,21 +2605,84 @@ export default function GlobeView({
             </>
           )}
 
+          {/* Secondary cascade impact flash and shockwave */}
+          {isKessler && kesslerSimState === 'cascade_impact' && secondaryImpactPosition && (
+            <>
+              <Entity id="kessler-secondary-flash" position={secondaryImpactPosition as any}>
+                <BillboardGraphics
+                  image={FLASH_SVG}
+                  scale={secondaryFlashScaleProperty as any}
+                  width={128}
+                  height={128}
+                />
+              </Entity>
+              <Entity id="kessler-secondary-shockwave" position={secondaryImpactPosition as any}>
+                <BillboardGraphics
+                  image={SHOCKWAVE_SVG}
+                  scale={secondaryShockwaveScaleProperty as any}
+                  color={secondaryShockwaveColorProperty as any}
+                  width={128}
+                  height={128}
+                />
+              </Entity>
+            </>
+          )}
+
           {/* Kessler Collision Debris Cloud */}
-          {isKessler && (kesslerSimState === 'impact' || kesslerSimState === 'debris_drifting') && kesslerDebris.map((d) => (
-            <Entity
-              key={d.id}
-              id={d.id}
-              position={d.positionProperty as any}
-            >
-              <BillboardGraphics
-                image={d.image}
-                width={14}
-                height={14}
-                scale={1.0}
-              />
-            </Entity>
-          ))}
+          {isKessler &&
+            [
+              'impact',
+              'debris_drifting',
+              'cascade_approach',
+              'cascade_impact',
+              'cascade_escalating',
+            ].includes(kesslerSimState) &&
+            kesslerDebris.map((d) => {
+              const isDangerous =
+                d.isDangerous &&
+                d.id === cascadeDangerousDebrisId &&
+                kesslerSimState === 'cascade_approach';
+
+              return (
+                <Fragment key={d.id}>
+                  {isDangerous && (
+                    <>
+                      <Entity id={`${d.id}-trail`} position={d.positionProperty as any}>
+                        <BillboardGraphics
+                          image={CRIMSON_DEBRIS_GLOW}
+                          scale={0.6}
+                          color={Cesium.Color.fromCssColorString('#ef4444').withAlpha(0.25)}
+                          width={32}
+                          height={32}
+                        />
+                      </Entity>
+                      <Entity id={`${d.id}-glow`} position={d.positionProperty as any}>
+                        <BillboardGraphics
+                          image={CRIMSON_DEBRIS_GLOW}
+                          scale={dangerousDebrisPulseScale as any}
+                          color={dangerousDebrisPulseColor as any}
+                          width={32}
+                          height={32}
+                        />
+                      </Entity>
+                    </>
+                  )}
+                  <Entity id={d.id} position={d.positionProperty as any}>
+                    <BillboardGraphics
+                      image={d.image}
+                      width={isDangerous ? 18 : 14}
+                      height={isDangerous ? 18 : 14}
+                      scale={isDangerous ? (dangerousDebrisPulseScale as any) : 1.0}
+                      color={
+                        isDangerous
+                          ? (dangerousDebrisPulseColor as any)
+                          : undefined
+                      }
+                    />
+                  </Entity>
+                </Fragment>
+              );
+            })}
 
           {/* Orbital Debris Layer (glowing red points, orange rockets, gray satellites) in Graveyard Mode */}
           {isGraveyard && !isKessler && debris.map((d) => {
