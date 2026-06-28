@@ -1194,6 +1194,7 @@
   position: relative;
   border-radius: 16px;
   padding: 1.0rem;
+  font-family: var(--font-inter);
   backdrop-filter: blur(16px) saturate(120%);
   -webkit-backdrop-filter: blur(16px) saturate(120%);
   transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);

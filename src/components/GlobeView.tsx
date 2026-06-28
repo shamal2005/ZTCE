@@ -24,11 +24,125 @@ const BLUE_TARGET_GLOW = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/
 interface KesslerDebrisItem {
   id: string;
   positionProperty: Cesium.CallbackProperty;
+  rotationProperty: Cesium.CallbackProperty;
   image: string;
   velocity: Cesium.Cartesian3;
+  burstDirection: Cesium.Cartesian3;
+  burstSpeed: number;
   spawnOrigin: Cesium.Cartesian3;
+  spawnLon: number;
+  spawnLat: number;
+  spawnHeight: number;
   spawnTime: number;
+  orbitalLonSpeed: number;
+  orbitalLonOffset: number;
+  orbitalLatOffset: number;
+  orbitalInclination: number;
+  orbitalPhaseOffset: number;
+  orbitalAltitudeOffset: number;
+  rotationSpeed: number;
+  rotationPhase: number;
+  scaleFactor: number;
   isDangerous?: boolean;
+}
+
+const DEBRIS_BURST_PEAK_SEC = 0.85;
+const DEBRIS_BURST_DECAY_SEC = 1.6;
+const DEBRIS_ORBIT_ALT_RAMP_SEC = 2.0;
+
+function smoothstep01(t: number): number {
+  const c = Math.max(0, Math.min(1, t));
+  return c * c * (3 - 2 * c);
+}
+
+function burstWeightAt(elapsedSec: number): number {
+  if (elapsedSec <= DEBRIS_BURST_PEAK_SEC) {
+    return 1 + 0.65 * Math.exp(-elapsedSec / 0.22);
+  }
+  return 1 - smoothstep01((elapsedSec - DEBRIS_BURST_PEAK_SEC) / DEBRIS_BURST_DECAY_SEC);
+}
+
+/** Evenly distributed sphere directions in local ENU at the collision point — no global-axis bias. */
+function generateIsotropicBurstDirection(
+  origin: Cesium.Cartesian3,
+  index: number,
+  count: number
+): Cesium.Cartesian3 {
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+  const up = 1 - ((index + 0.5) / count) * 2;
+  const ringRadius = Math.sqrt(Math.max(0, 1 - up * up));
+  const theta = goldenAngle * index + Math.random() * 0.4;
+
+  const jitter = 0.1 + (index % 7) * 0.025;
+  const localDir = new Cesium.Cartesian3(
+    Math.cos(theta) * ringRadius + (Math.random() - 0.5) * jitter,
+    Math.sin(theta) * ringRadius + (Math.random() - 0.5) * jitter,
+    up + (Math.random() - 0.5) * jitter
+  );
+  Cesium.Cartesian3.normalize(localDir, localDir);
+
+  const enuToFixed = Cesium.Transforms.eastNorthUpToFixedFrame(origin);
+  const ecefDir = Cesium.Matrix4.multiplyByPointAsVector(
+    enuToFixed,
+    localDir,
+    new Cesium.Cartesian3()
+  );
+  Cesium.Cartesian3.normalize(ecefDir, ecefDir);
+  return ecefDir;
+}
+
+function computeBurstResidualOffset(debris: KesslerDebrisItem, elapsedSec: number): Cesium.Cartesian3 {
+  const displacement = new Cesium.Cartesian3(0, 0, 0);
+  if (elapsedSec <= 0) return displacement;
+
+  const stepSize = 0.025;
+  const steps = Math.max(1, Math.ceil(elapsedSec / stepSize));
+  const dt = elapsedSec / steps;
+
+  const burstVec = Cesium.Cartesian3.multiplyByScalar(
+    debris.burstDirection,
+    debris.burstSpeed,
+    new Cesium.Cartesian3()
+  );
+
+  for (let i = 0; i < steps; i++) {
+    const t = (i + 0.5) * dt;
+    const weight = burstWeightAt(t);
+    Cesium.Cartesian3.add(
+      displacement,
+      Cesium.Cartesian3.multiplyByScalar(burstVec, weight * dt, new Cesium.Cartesian3()),
+      displacement
+    );
+  }
+
+  return displacement;
+}
+
+/** Each fragment follows its own orbital lane with unique speed, inclination, and altitude. */
+function computeIndependentOrbitPosition(debris: KesslerDebrisItem, elapsedSec: number): Cesium.Cartesian3 {
+  const orbitBlend = smoothstep01(elapsedSec / DEBRIS_ORBIT_ALT_RAMP_SEC);
+
+  const lon =
+    debris.spawnLon +
+    elapsedSec * debris.orbitalLonSpeed +
+    debris.orbitalLonOffset * orbitBlend;
+
+  const lonRad = lon * Cesium.Math.RADIANS_PER_DEGREE;
+  const spawnLonRad = debris.spawnLon * Cesium.Math.RADIANS_PER_DEGREE;
+
+  const lat =
+    debris.spawnLat +
+    debris.orbitalLatOffset * orbitBlend +
+    debris.orbitalInclination *
+      orbitBlend *
+      (Math.sin(lonRad + debris.orbitalPhaseOffset) - Math.sin(spawnLonRad + debris.orbitalPhaseOffset));
+
+  const altBlend = Math.min(1, elapsedSec / DEBRIS_ORBIT_ALT_RAMP_SEC);
+  const height = debris.spawnHeight + debris.orbitalAltitudeOffset * altBlend;
+
+  return Cesium.Ellipsoid.WGS84.cartographicToCartesian(
+    Cesium.Cartographic.fromDegrees(lon, lat, Math.max(height, 180000))
+  );
 }
 
 interface FinalCascadePair {
@@ -60,12 +174,18 @@ function isStateAtOrAfter(current: KesslerSimState, target: KesslerSimState): bo
 
 function getDebrisWorldPosition(debris: KesslerDebrisItem, atTimeMs: number = Date.now()) {
   const elapsedSec = (atTimeMs - debris.spawnTime) / 1000;
-  const offset = Cesium.Cartesian3.multiplyByScalar(
-    debris.velocity,
-    elapsedSec,
+  const orbitPos = computeIndependentOrbitPosition(debris, elapsedSec);
+  const burstOffset = computeBurstResidualOffset(debris, elapsedSec);
+
+  const orbitBlend = smoothstep01(elapsedSec / DEBRIS_ORBIT_ALT_RAMP_SEC);
+  const spawnOrbitPos = computeIndependentOrbitPosition(debris, 0);
+  const orbitDrift = Cesium.Cartesian3.subtract(orbitPos, spawnOrbitPos, new Cesium.Cartesian3());
+
+  return Cesium.Cartesian3.add(
+    Cesium.Cartesian3.add(debris.spawnOrigin, burstOffset, new Cesium.Cartesian3()),
+    Cesium.Cartesian3.multiplyByScalar(orbitDrift, orbitBlend, new Cesium.Cartesian3()),
     new Cesium.Cartesian3()
   );
-  return Cesium.Cartesian3.add(debris.spawnOrigin, offset, new Cesium.Cartesian3());
 }
 
 function generateKesslerDebrisFragments(
@@ -74,34 +194,64 @@ function generateKesslerDebrisFragments(
   idPrefix: string,
   spawnTime: number = Date.now()
 ): KesslerDebrisItem[] {
+  const spawnCarto = Cesium.Cartographic.fromCartesian(origin);
+  const spawnLon = Cesium.Math.toDegrees(spawnCarto.longitude);
+  const spawnLat = Cesium.Math.toDegrees(spawnCarto.latitude);
+  const spawnHeight = spawnCarto.height;
+  const spawnOrigin = Cesium.Cartesian3.clone(origin);
+
   const debrisList: KesslerDebrisItem[] = [];
   for (let i = 0; i < count; i++) {
-    const dir = new Cesium.Cartesian3(
-      Math.random() - 0.5,
-      Math.random() - 0.5,
-      Math.random() - 0.5
-    );
-    Cesium.Cartesian3.normalize(dir, dir);
-    const speed = 4000 + Math.random() * 14000;
-    const velocity = Cesium.Cartesian3.multiplyByScalar(dir, speed, new Cesium.Cartesian3());
-    const spawnOrigin = Cesium.Cartesian3.clone(origin);
+    const burstDirection = generateIsotropicBurstDirection(spawnOrigin, i, count);
+    const speedSpread = 0.45 + (i % 11) * 0.09 + Math.random() * 0.85;
+    const burstSpeed = (32000 + Math.pow(Math.random(), 0.55) * 148000) * speedSpread;
+    const velocity = Cesium.Cartesian3.multiplyByScalar(burstDirection, burstSpeed, new Cesium.Cartesian3());
 
-    const positionProperty = new Cesium.CallbackProperty(() => {
-      return getDebrisWorldPosition({
-        velocity,
-        spawnOrigin,
-        spawnTime,
-      } as KesslerDebrisItem);
-    }, false);
+    const lonSpeedMag = (0.45 + Math.random() * 1.05) * 1.8;
+    const orbitalLonSpeed = (Math.random() < 0.5 ? -1 : 1) * lonSpeedMag;
+    const orbitalLonOffset = (Math.random() - 0.5) * 5.5;
+    const orbitalLatOffset = (Math.random() - 0.5) * 4.5;
+    const orbitalInclination = 1.5 + Math.random() * 14;
+    const orbitalPhaseOffset = Math.random() * Math.PI * 2;
+    const orbitalAltitudeOffset = (Math.random() - 0.5) * 140000;
+    const rotationSpeed = (Math.random() - 0.5) * 7;
+    const rotationPhase = Math.random() * Math.PI * 2;
+    const scaleFactor = 0.72 + Math.random() * 0.56;
 
-    debrisList.push({
+    const item: KesslerDebrisItem = {
       id: `${idPrefix}-${i}`,
-      positionProperty,
+      positionProperty: null as unknown as Cesium.CallbackProperty,
+      rotationProperty: null as unknown as Cesium.CallbackProperty,
       image: SHARD_SVGS[i % 3],
       velocity,
+      burstDirection,
+      burstSpeed,
       spawnOrigin,
+      spawnLon,
+      spawnLat,
+      spawnHeight,
       spawnTime,
-    });
+      orbitalLonSpeed,
+      orbitalLonOffset,
+      orbitalLatOffset,
+      orbitalInclination,
+      orbitalPhaseOffset,
+      orbitalAltitudeOffset,
+      rotationSpeed,
+      rotationPhase,
+      scaleFactor,
+    };
+
+    item.positionProperty = new Cesium.CallbackProperty(() => {
+      return getDebrisWorldPosition(item);
+    }, false);
+
+    item.rotationProperty = new Cesium.CallbackProperty(() => {
+      const elapsedSec = (Date.now() - spawnTime) / 1000;
+      return rotationPhase + rotationSpeed * elapsedSec;
+    }, false);
+
+    debrisList.push(item);
   }
   return debrisList;
 }
@@ -2989,7 +3139,8 @@ export default function GlobeView({
                       image={d.image}
                       width={isDangerous ? 18 : 14}
                       height={isDangerous ? 18 : 14}
-                      scale={isDangerous ? (dangerousDebrisPulseScale as any) : 1.0}
+                      rotation={d.rotationProperty as any}
+                      scale={isDangerous ? (dangerousDebrisPulseScale as any) : d.scaleFactor}
                       color={
                         isDangerous
                           ? (dangerousDebrisPulseColor as any)
@@ -3252,19 +3403,19 @@ export default function GlobeView({
             <div className="w-[280px] md:w-[320px] bg-black/75 backdrop-blur-md border border-red-500/30 rounded-xl px-4 py-3 shadow-[0_0_25px_rgba(239,68,68,0.2)] flex flex-col items-center">
               <div className="flex items-center gap-1.5 justify-center">
                 <span className="text-red-500 text-sm animate-pulse">⚠</span>
-                <h4 className="text-red-400 font-bold text-xs md:text-sm tracking-wider uppercase font-inter">
-                  Collision Predicted
+                <h4 className="text-red-400 font-bold text-xs md:text-sm tracking-[0.12em] uppercase font-inter">
+                  COLLISION PREDICTED
                 </h4>
               </div>
-              <p className="text-slate-300 text-[10px] md:text-[11px] mt-1 text-center font-inter font-light">
+              <p className="text-slate-300/90 text-[10px] md:text-[11px] mt-1 text-center font-inter font-medium leading-relaxed">
                 Potential orbital intersection detected.
               </p>
 
               {/* Countdown display */}
               {kesslerSimState === 'countdown' && (
                 <div className="flex flex-col items-center mt-3 pt-2.5 border-t border-red-500/10 w-full">
-                  <span className="text-slate-400 text-[9px] uppercase tracking-widest font-semibold font-inter">
-                    Collision in
+                  <span className="text-slate-400 text-[9px] uppercase tracking-[0.14em] font-semibold font-inter">
+                    COLLISION IN
                   </span>
                   <div key={kesslerCountdown} className="text-red-500 font-black text-3xl md:text-4xl mt-1.5 font-inter animate-countdown">
                     {kesslerCountdown}
